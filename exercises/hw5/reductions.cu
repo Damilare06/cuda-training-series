@@ -18,12 +18,14 @@ const size_t N = 8ULL*1024ULL*1024ULL;  // data size
 //const size_t N = 256*640; // data size
 const int BLOCK_SIZE = 256;  // CUDA maximum is 1024
 // naive atomic reduction kernel
-__global__ void atomic_red(const float *gdata, float *out){
+__global__ 
+void atomic_red(const float *gdata, float *out){
   size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
   if (idx < N) atomicAdd(out, gdata[idx]);
 }
 
-__global__ void reduce(float *gdata, float *out){
+__global__ 
+void reduce(float *gdata, float *out){
      __shared__ float sdata[BLOCK_SIZE];
      int tid = threadIdx.x;
      sdata[tid] = 0.0f;
@@ -102,45 +104,52 @@ int main(){
   float *h_A, *h_sum, *d_A, *d_sum;
   h_A = new float[N];  // allocate space for data in host memory
   h_sum = new float;
+
   for (int i = 0; i < N; i++)  // initialize matrix in host memory
     h_A[i] = 1.0f;
+
   cudaMalloc(&d_A, N*sizeof(float));  // allocate device space for A
   cudaMalloc(&d_sum, sizeof(float));  // allocate device space for sum
   cudaCheckErrors("cudaMalloc failure"); // error checking
+
   // copy matrix A to device:
   cudaMemcpy(d_A, h_A, N*sizeof(float), cudaMemcpyHostToDevice);
   cudaCheckErrors("cudaMemcpy H2D failure");
   cudaMemset(d_sum, 0, sizeof(float));
   cudaCheckErrors("cudaMemset failure");
+
   //cuda processing sequence step 1 is complete
   atomic_red<<<(N+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(d_A, d_sum);
   cudaCheckErrors("atomic reduction kernel launch failure");
   //cuda processing sequence step 2 is complete
+
   // copy vector sums from device to host:
   cudaMemcpy(h_sum, d_sum, sizeof(float), cudaMemcpyDeviceToHost);
   //cuda processing sequence step 3 is complete
   cudaCheckErrors("atomic reduction kernel execution failure or cudaMemcpy H2D failure");
   if (*h_sum != (float)N) {printf("atomic sum reduction incorrect!\n"); return -1;}
   printf("atomic sum reduction correct!\n");
+
   const int blocks = 640;
   cudaMemset(d_sum, 0, sizeof(float));
   cudaCheckErrors("cudaMemset failure");
+
   //cuda processing sequence step 1 is complete
   reduce_a<<<blocks, BLOCK_SIZE>>>(d_A, d_sum);
   cudaCheckErrors("reduction w/atomic kernel launch failure");
-  //cuda processing sequence step 2 is complete
+
   // copy vector sums from device to host:
   cudaMemcpy(h_sum, d_sum, sizeof(float), cudaMemcpyDeviceToHost);
   //cuda processing sequence step 3 is complete
   cudaCheckErrors("reduction w/atomic kernel execution failure or cudaMemcpy H2D failure");
   if (*h_sum != (float)N) {printf("reduction w/atomic sum incorrect!\n"); return -1;}
   printf("reduction w/atomic sum correct!\n");
+
   cudaMemset(d_sum, 0, sizeof(float));
   cudaCheckErrors("cudaMemset failure");
   //cuda processing sequence step 1 is complete
   reduce_ws<<<blocks, BLOCK_SIZE>>>(d_A, d_sum);
   cudaCheckErrors("reduction warp shuffle kernel launch failure");
-  //cuda processing sequence step 2 is complete
   // copy vector sums from device to host:
   cudaMemcpy(h_sum, d_sum, sizeof(float), cudaMemcpyDeviceToHost);
   //cuda processing sequence step 3 is complete

@@ -61,13 +61,41 @@ unsigned long long dtime_usec(unsigned long long start) {
 
 int main() {
   ft *h_x, *d_x, *h_y, *h_y1, *d_y;
-  cudaHostAlloc(&h_x,  ds*sizeof(ft), cudaHostAllocDefault);
+  ft *a_x, *a_y;
+
+  unsigned long long et1 = dtime_usec(0);
+  cudaMallocManaged(&a_x, ds*sizeof(ft));
+  cudaMallocManaged(&a_y, ds*sizeof(ft));
+
+  cudaCheckErrors("stream creation error");
+  gaussian_pdf<<<(ds + 255) / 256, 256>>>(a_x, a_y, 0.0, 1.0, ds); // warm-up
+
+  for (size_t i = 0; i < ds; i++) a_x[i] = rand() / (ft)RAND_MAX;
+
+  cudaMemPrefetchAsync(a_x, ds*sizeof(a_x[0]), 0);
+  cudaMemPrefetchAsync(a_y, ds*sizeof(a_x[0]), 0);
+
+  gaussian_pdf<<<(ds + 255) / 256, 256>>>(a_x, a_y, 0.0, 1.0, ds);
+  cudaMemPrefetchAsync(a_y, ds*sizeof(a_x[0]), cudaCpuDeviceId);
+  cudaDeviceSynchronize();
+  cudaCheckErrors("non-streams execution error");
+
+  et1 = dtime_usec(et1);
+  std::cout << "non-stream elapsed time: " << et1/(float)USECPSEC << std::endl;
+
+
+#ifdef USE_STREAMS
+  unsigned long long et = dtime_usec(0);
+
+  cudaHostAlloc(&h_x,  ds*sizeof(ft), cudaHostAllocDefault); //pinned allocation for concurrency
   cudaHostAlloc(&h_y,  ds*sizeof(ft), cudaHostAllocDefault);
-  cudaHostAlloc(&h_y1, ds*sizeof(ft), cudaHostAllocDefault);
+  cudaHostAlloc(&h_y1, ds*sizeof(ft), cudaHostAllocDefault);// host memory must be pinned
+
   cudaMalloc(&d_x, ds*sizeof(ft));
   cudaMalloc(&d_y, ds*sizeof(ft));
   cudaCheckErrors("allocation error");
 
+  // create 8 streams for overlapping copies
   cudaStream_t streams[num_streams];
   for (int i = 0; i < num_streams; i++) {
     cudaStreamCreate(&streams[i]);
@@ -76,29 +104,15 @@ int main() {
 
   gaussian_pdf<<<(ds + 255) / 256, 256>>>(d_x, d_y, 0.0, 1.0, ds); // warm-up
 
-  for (size_t i = 0; i < ds; i++) {
-    h_x[i] = rand() / (ft)RAND_MAX;
-  }
+  for (size_t i = 0; i < ds; i++) h_x[i] = rand() / (ft)RAND_MAX;
   cudaDeviceSynchronize();
 
-  unsigned long long et1 = dtime_usec(0);
-
-  cudaMemcpy(d_x, h_x, ds * sizeof(ft), cudaMemcpyHostToDevice);
-  gaussian_pdf<<<(ds + 255) / 256, 256>>>(d_x, d_y, 0.0, 1.0, ds);
-  cudaMemcpy(h_y1, d_y, ds * sizeof(ft), cudaMemcpyDeviceToHost);
-  cudaCheckErrors("non-streams execution error");
-
-  et1 = dtime_usec(et1);
-  std::cout << "non-stream elapsed time: " << et1/(float)USECPSEC << std::endl;
-
-#ifdef USE_STREAMS
   cudaMemset(d_y, 0, ds * sizeof(ft));
 
-  unsigned long long et = dtime_usec(0);
 
-  for (int i = 0; i < chunks; i++) { //depth-first launch
-    cudaMemcpyAsync(d_x + FIXME, h_x + FIXME, (FIXME) * sizeof(ft), cudaMemcpyHostToDevice, streams[FIXME]);
-    gaussian_pdf<<<((FIXME) + 255) / 256, 256, 0, streams[FIXME]>>>(d_x + FIXME, d_y + FIXME, 0.0, 1.0, FIXME);
+  for (int i = 0; i < chunks; i++) { //depth-first launch/ issue-order
+    cudaMemcpyAsync(d_x + (ds/chunks)*i, h_x + (ds/chunks)*i, (ds/chunks) * sizeof(ft), cudaMemcpyHostToDevice, streams[i % num_streams]);// must be snt to differnt streams
+    gaussian_pdf<<<((ds/chunks) + 255) / 256, 256, 0, streams[i % num_streams]>>>(d_x + (ds/chunks)*i, d_y + (ds/chunks)*i, 0.0, 1.0, ds/chunks);
     cudaMemcpyAsync(h_y + i * (ds / chunks), d_y + i * (ds / chunks), (ds / chunks) * sizeof(ft), cudaMemcpyDeviceToHost, streams[i % num_streams]);
   }
   cudaDeviceSynchronize();

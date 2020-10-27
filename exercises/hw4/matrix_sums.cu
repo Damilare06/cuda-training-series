@@ -16,25 +16,31 @@
 const size_t DSIZE = 16384;      // matrix side dimension
 const int block_size = 256;  // CUDA maximum is 1024
 
+struct DataElement
+{
+  char *name;
+  int value;
+}
+
 // matrix row-sum kernel
 __global__ void row_sums(const float *A, float *sums, size_t ds){
 
-  int idx = FIXME // create typical 1D thread index from built-in variables
+  int idx = threadIdx.x + blockDim.x*blockIdx.x; // create typical 1D thread index from built-in variables
   if (idx < ds){
     float sum = 0.0f;
     for (size_t i = 0; i < ds; i++)
-      sum += A[FIXME]         // write a for loop that will cause the thread to iterate across a row, keeeping a running sum, and write the result to sums
+      sum += A[idx];         // write a for loop that will cause the thread to iterate across a row, keeeping a running sum, and write the result to sums
     sums[idx] = sum;
 }}
 
 // matrix column-sum kernel
 __global__ void column_sums(const float *A, float *sums, size_t ds){
 
-  int idx = FIXME // create typical 1D thread index from built-in variables
+  int idx = threadIdx.x + blockDim.x*blockIdx.x; // create typical 1D thread index from built-in variables
   if (idx < ds){
     float sum = 0.0f;
     for (size_t i = 0; i < ds; i++)
-      sum += A[FIXME]         // write a for loop that will cause the thread to iterate down a column, keeeping a running sum, and write the result to sums
+      sum += A[i*ds + idx];        // write a for loop that will cause the thread to iterate down a column, keeeping a running sum, and write the result to sums
     sums[idx] = sum;
 }}
 
@@ -44,17 +50,14 @@ bool validate(float *data, size_t sz){
     return true;
 }
 
-int main(){
+int launch(float *h_A)
+{
 
-  float *h_A, *h_sums, *d_A, *d_sums;
-  h_A = new float[DSIZE*DSIZE];  // allocate space for data in host memory
-  h_sums = new float[DSIZE]();
-    
-  for (int i = 0; i < DSIZE*DSIZE; i++)  // initialize matrix in host memory
-    h_A[i] = 1.0f;
-    
+  float *h_sums, *d_A, *d_sums;
+  h_sums = new float[DSIZE];
+  
   cudaMalloc(&d_A, DSIZE*DSIZE*sizeof(float));  // allocate device space for A
-  FIXME // allocate device space for vector d_sums
+  cudaMalloc(&d_sums, DSIZE*sizeof(float));// allocate device space for vector d_sums
   cudaCheckErrors("cudaMalloc failure"); // error checking
     
   // copy matrix A to device:
@@ -88,6 +91,19 @@ int main(){
     
   if (!validate(h_sums, DSIZE)) return -1; 
   printf("column sums correct!\n");
+  return 0;
+}
+
+
+int main(){
+
+  float *h_A;
+  h_A = new float[DSIZE*DSIZE];  // allocate space for data in host memory
+    
+  for (int i = 0; i < DSIZE*DSIZE; i++)  // initialize matrix in host memory
+    h_A[i] = 1.0f;
+    
+  launch(h_A);
   return 0;
 }
   
